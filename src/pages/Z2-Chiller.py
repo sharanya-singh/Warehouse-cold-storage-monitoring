@@ -8,6 +8,12 @@ from datetime import datetime, timedelta
 
 st.set_page_config(page_title="Z2-Chiller Monitor", layout="wide", page_icon="❄️")
 
+# --- Initialize Session State ---
+if 'acknowledged_alerts' not in st.session_state:
+    st.session_state.acknowledged_alerts = {
+        'Z1-Freezer': None, 'Z2-Chiller': None, 'Z3-Produce': None, 'Z4-Pharma': None
+    }
+
 # === NOTIFICATION SYSTEM ===
 def show_alert_notification(alert_type, message, zone="Z2-Chiller"):
     """Display alert notifications with sound and visual alerts"""
@@ -253,16 +259,13 @@ def load_zone_data():
         st.error(f"❌ Error loading data: {e}")
         return pd.DataFrame()
 
-def display_threshold_aware_metrics(df, zone_id="Z2-Chiller", config=None):
+def display_threshold_aware_metrics(df, zone_id="Z2-Chiller", config=None, active_alert_count=0):
     """Display metrics panel with DARK backgrounds and alert notifications"""
     zone_data = df[df['zone_id'] == zone_id].sort_values('timestamp') if 'zone_id' in df.columns else df.sort_values('timestamp')
 
     if len(zone_data) < 2:
         st.warning("⚠️ Insufficient data for trend analysis")
         return zone_data
-
-    if config:
-        zone_data = apply_custom_alert_logic(zone_data, config)
 
     current = zone_data.iloc[-1]
     previous = zone_data.iloc[-2]
@@ -276,10 +279,9 @@ def display_threshold_aware_metrics(df, zone_id="Z2-Chiller", config=None):
             return zone_data
 
     temp_change = current['temperature'] - previous['temperature']
-    recent_alerts = len(zone_data.tail(12)[zone_data.tail(12)['alert_status'] == 'alert']) if len(zone_data) >= 12 else len(zone_data[zone_data['alert_status'] == 'alert'])
 
     if config:
-        status_info = get_zone_status_color_custom(current['temperature'], recent_alerts, config)
+        status_info = get_zone_status_color_custom(current['temperature'], active_alert_count, config)
     else:
         status_info = {
             'status': 'normal',
@@ -322,7 +324,7 @@ def display_threshold_aware_metrics(df, zone_id="Z2-Chiller", config=None):
             <div>
                 <h2 style="margin: 0; color: {status_info['text_color']};">{status_info['status_emoji']} {status_info['status_text']}</h2>
                 <h3 style="margin: 5px 0; color: {status_info['text_color']};">Current: {current['temperature']:.1f}°C{config_text}</h3>
-                <p style="margin: 0; color: {status_info['text_color']};">{recent_alerts} active alerts</p>
+                <p style="margin: 0; color: {status_info['text_color']};">{active_alert_count} active alerts</p>
             </div>
             <div style="text-align: right; color: {status_info['text_color']};">
                 <h4 style="margin: 0;">{status_info['status_text']}</h4>
@@ -351,7 +353,7 @@ def display_threshold_aware_metrics(df, zone_id="Z2-Chiller", config=None):
             st.metric("💧 Humidity", "N/A")
 
     with col3:
-        st.metric("🚨 Recent Alerts", f"{recent_alerts}")
+        st.metric("🚨 Recent Alerts", f"{active_alert_count}")
 
     with col4:
         data_age = (datetime.now() - current['timestamp']).total_seconds() / 60

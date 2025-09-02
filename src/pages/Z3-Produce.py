@@ -8,6 +8,12 @@ from datetime import datetime, timedelta
 
 st.set_page_config(page_title="Z3-Produce Monitor", layout="wide", page_icon="🥬")
 
+# --- Initialize Session State ---
+if 'acknowledged_alerts' not in st.session_state:
+    st.session_state.acknowledged_alerts = {
+        'Z1-Freezer': None, 'Z2-Chiller': None, 'Z3-Produce': None, 'Z4-Pharma': None
+    }
+
 # === NOTIFICATION SYSTEM ===
 def show_alert_notification(alert_type, message, zone="Z3-Produce"):
     """Display alert notifications with sound and visual alerts"""
@@ -93,12 +99,14 @@ def setup_threshold_configuration(zone_id="Z3-Produce"):
         st.header("⚙️ Threshold Configuration")
         st.markdown("**Your changes will be saved automatically.**")
 
-        st.subheader("🌡️ Temperature Thresholds")
         st.slider(
-            "Optimal Temperature Range (°C)", 0.0, 20.0, step=0.5,
+            "Optimal Temperature Range (°C)", 0.0, 20.0,
+            value=(st.session_state.get(prefix + 'temp_range', (5.0, 10.0))), # Corrected line
+            step=0.5,
             key=prefix + "temp_range",
             help="Set the optimal temperature range for fresh produce storage"
         )
+
         st.slider(
             "Warning Buffer (±°C)", 0.5, 4.0, step=0.5,
             key=prefix + "warning_buffer",
@@ -107,7 +115,10 @@ def setup_threshold_configuration(zone_id="Z3-Produce"):
 
         st.subheader("💧 Humidity Thresholds")
         st.slider(
-            "Optimal Humidity Range (%)", 0, 100, step=5,
+            "Optimal Humidity Range (%)",
+            0, 100,
+            value=(st.session_state.get(prefix + 'humidity_range', (80, 95))), # Corrected line
+            step=5,
             key=prefix + "humidity_range",
             help="Set the optimal humidity range for fresh produce"
         )
@@ -259,7 +270,7 @@ def calculate_freshness_score(zone_data, config):
 
     return min(100, max(0, freshness_score))
 
-def display_threshold_aware_metrics(df, zone_id="Z3-Produce", config=None):
+def display_threshold_aware_metrics(df, zone_id="Z3-Produce", config=None, active_alert_count=0):
     """Display metrics panel with DARK backgrounds and alert notifications"""
     zone_data = df[df['zone_id'] == zone_id].sort_values('timestamp') if 'zone_id' in df.columns else df.sort_values('timestamp')
 
@@ -282,10 +293,9 @@ def display_threshold_aware_metrics(df, zone_id="Z3-Produce", config=None):
             return zone_data
 
     temp_change = current['temperature'] - previous['temperature']
-    recent_alerts = len(zone_data.tail(12)[zone_data.tail(12)['alert_status'] == 'alert']) if len(zone_data) >= 12 else len(zone_data[zone_data['alert_status'] == 'alert'])
 
     if config:
-        status_info = get_zone_status_color_custom(current['temperature'], recent_alerts, config)
+        status_info = get_zone_status_color_custom(current['temperature'], active_alert_count, config)
     else:
         status_info = {
             'status': 'normal',
@@ -328,7 +338,7 @@ def display_threshold_aware_metrics(df, zone_id="Z3-Produce", config=None):
             <div>
                 <h2 style="margin: 0; color: {status_info['text_color']};">{status_info['status_emoji']} {status_info['status_text']}</h2>
                 <h3 style="margin: 5px 0; color: {status_info['text_color']};">Current: {current['temperature']:.1f}°C{config_text}</h3>
-                <p style="margin: 0; color: {status_info['text_color']};">{recent_alerts} active alerts</p>
+                <p style="margin: 0; color: {status_info['text_color']};">{active_alert_count} active alerts</p>
             </div>
             <div style="text-align: right; color: {status_info['text_color']};">
                 <h4 style="margin: 0;">{status_info['status_text']}</h4>
@@ -357,7 +367,7 @@ def display_threshold_aware_metrics(df, zone_id="Z3-Produce", config=None):
             st.metric("💧 Humidity", "N/A")
 
     with col3:
-        st.metric("🚨 Recent Alerts", f"{recent_alerts}")
+        st.metric("🚨 Recent Alerts", f"{active_alert_count}")
 
     with col4:
         if config and config.get('freshness_monitoring', True):
@@ -499,16 +509,29 @@ def draw_dashboard(placeholder, config):
     # Load and process data
     df_original = load_zone_data()
     if df_original.empty:
-        with placeholder.container():
-            st.warning("⚠️ No data available. Is the data generator running?")
+        placeholder.warning("⚠️ No data available.")
         return
 
+    zone_id = "Z3-Produce"
     df_processed = apply_custom_alert_logic(df_original, config)
+    
+    acknowledged_ts = st.session_state.acknowledged_alerts.get(zone_id)
+    unacknowledged_data = df_processed[df_processed['timestamp'] > acknowledged_ts] if acknowledged_ts else df_processed
+
+    active_alerts_df = unacknowledged_data[unacknowledged_data['alert_status'] == 'alert']
+    active_alert_count = len(active_alerts_df)
 
     # Use the placeholder's container to draw the content
     with placeholder.container():
+        # Display acknowledgement button if there are active alerts
+        if active_alert_count > 0:
+            st.error(f"🚨 **{active_alert_count} unacknowledged alerts!**")
+            if st.button(f"✅ Acknowledge & Clear Alerts for {zone_id}"):
+                st.session_state.acknowledged_alerts[zone_id] = active_alerts_df['timestamp'].max()
+                st.rerun()
+
         # Call the existing display functions
-        zone_data = display_threshold_aware_metrics(df_processed, "Z3-Produce", config)
+        zone_data = display_threshold_aware_metrics(df_processed, zone_id, config, active_alert_count=active_alert_count)
 
         if not zone_data.empty:
             display_produce_analysis(zone_data, config)
@@ -541,22 +564,22 @@ def draw_dashboard(placeholder, config):
 
 # === MAIN APPLICATION LOGIC ===
 st.title("🥬 Z3-Produce Live Monitor")
-st.markdown("**Real-time monitoring for fresh produce storage**")
+st.markdown("**Real-time monitoring for fresh produce storage with quality analysis and alerts**")
 
 user_config = setup_threshold_configuration()
 auto_refresh = st.toggle("🔄 Auto-Refresh Dashboard", value=True)
 placeholder = st.empty()
 
 if auto_refresh:
+    timer_placeholder = st.empty()
     while True:
         st.cache_data.clear()
         draw_dashboard(placeholder, user_config)
-        with st.empty():
-            for seconds in range(user_config['auto_refresh_interval'], 0, -1):
-                st.markdown(f"**Next refresh in {seconds} seconds...**")
-                time.sleep(1)
-            st.markdown("**Refreshing data...**")
+        for seconds in range(user_config['auto_refresh_interval'], 0, -1):
+            timer_placeholder.markdown(f"**Next refresh in {seconds} seconds...**")
+            time.sleep(1)
+        timer_placeholder.empty()
 else:
     st.cache_data.clear()
     draw_dashboard(placeholder, user_config)
-    st.warning("Auto-refresh is off. Toggle it on to see live updates.")
+    st.warning("Auto-refresh is off.")

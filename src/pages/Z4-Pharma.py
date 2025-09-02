@@ -104,7 +104,9 @@ def setup_threshold_configuration(zone_id="Z4-Pharma"):
 
         st.subheader("🌡️ Temperature Thresholds")
         st.slider(
-            "Optimal Temperature Range (°C)", -10.0, 15.0, step=0.2,
+            "Optimal Temperature Range (°C)", -10.0, 15.0,
+            value=(st.session_state.get(prefix + 'temp_range', (2.0, 8.0))), # Corrected line
+            step=0.2,
             key=prefix + "temp_range",
             help="Set the optimal temperature range for pharmaceutical storage"
         )
@@ -116,7 +118,9 @@ def setup_threshold_configuration(zone_id="Z4-Pharma"):
 
         st.subheader("💧 Humidity Thresholds")
         st.slider(
-            "Optimal Humidity Range (%)", 0, 100, step=5,
+            "Optimal Humidity Range (%)", 0, 100,
+            value=(st.session_state.get(prefix + 'humidity_range', (50, 60))), # Corrected line
+            step=5,
             key=prefix + "humidity_range",
             help="Set the optimal humidity range for pharmaceutical products"
         )
